@@ -16,44 +16,40 @@ library(readr)
 library(tidyverse)
 library(gt)
 library(openintro)
-library(ggplot2)
 library(modelr)
 library(knitr)
 library(xtable)
 library(lterdatasampler)
-suppressMessages(library(tidymodels))
-suppressMessages(library(gghighlight))
-suppressMessages(library(glue))
-suppressMessages(library(ggmosaic))
-suppressMessages(library(ggridges))
-suppressMessages(library(gridExtra))
-suppressMessages(library(infer))
-suppressMessages(library(janitor))
-suppressMessages(library(knitr))
-suppressMessages(library(kableExtra))
-suppressMessages(library(maps))
-suppressMessages(library(openintro))
-suppressMessages(library(patchwork))
-#suppressMessages(library(quantreg))
-suppressMessages(library(tidyverse))
-suppressMessages(library(scales))
-suppressMessages(library(skimr))
-suppressMessages(library(caret))
-suppressMessages(library(palmerpenguins))
-suppressMessages(library(survival))
-suppressMessages(library(waffle))
-suppressMessages(library(ggrepel))
-suppressMessages(library(ggpubr))
+library(tidymodels)
+library(gghighlight)
+library(glue)
+library(ggmosaic)
+library(ggridges)
+library(gridExtra)
+library(infer)
+library(janitor)
+library(kableExtra)
+library(maps)
+library(patchwork)
+library(scales)
+library(skimr)
+library(caret)
+library(palmerpenguins)
+library(survival)
+library(waffle)
+library(ggrepel)
+library(ggpubr)
 ```
 
 
-```{r data import, echo=FALSE}
+```{r data import, echo=FALSE, include=FALSE}
 df_famines <- read_excel("data/wpf_famines.xlsx", sheet = "owd_wfp_merged")
 df_HNP_data <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Data")
 df_WB_country <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Country")
 df_WB_series <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Series")
 df_owd_diabetes <- read_csv("data/diabetes-prevalence.csv")
 ```
+
 
 ## Data preparation
 
@@ -138,7 +134,7 @@ df_HNP_famines = df_HNP_indicators %>% filter(fam_occured)
 ```{r}
 ggplot(data = df_owd_diab_fams, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = as.factor(Year), colour = fam_occured)) +
   geom_point() +
-  labs(x = "Year", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + theme_classic()
+  labs(x = "Year", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + scale_color_discrete("Did famine occur?") + theme_classic()
 
 ggplot(data = df_owd_diab_fams_2021, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = fam_occured)) +
   geom_point() +
@@ -165,7 +161,8 @@ ggplot(data = df_owd_diab_fams, aes(y = `Diabetes prevalence (% of population ag
   labs(x = "Year", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + theme_classic()
   
 ```{r}
-lm (SH.STA.DIAB.ZS ~ fam_occured, data = df_HNP_indicators) %>% summary()
+mod_dia =lm (SH.STA.DIAB.ZS ~ fam_occured, data = df_HNP_indicators)
+summary(mod_dia)
 lm (SH.STA.DIAB.ZS ~ old_fam_occured, data = df_HNP_famines) %>% summary()
 
 lm (SH.DYN.NCOM.ZS ~ fam_occured, data = df_HNP_indicators) %>% summary()
@@ -183,6 +180,17 @@ summary(mod_dia_gni_oldf)
 mod_dia_gni_owad = lm (SH.STA.DIAB.ZS ~ fam_occured + NY.GNP.PCAP.CD + SH.STA.OWAD.ZS, data = df_HNP_indicators)
 summary(mod_dia_gni_owad)
 
+mod_owad_fam_gni = lm (SH.STA.OWAD.ZS ~ fam_occured + NY.GNP.PCAP.CD, data = df_HNP_indicators)
+summary(mod_owad_fam_gni)
+
+df_HNP_indicators %>% 
+  ggplot(aes(x = NY.GNP.PCAP.CD, y = SH.STA.OWAD.ZS, color = fam_occured)) +
+  geom_point() +
+  geom_line(data = augment(mod_owad_fam_gni), aes(y = .fitted, color = fam_occured)) + 
+  labs(x = "GNI Per Capita (2021)",
+       y = "Obesity prevelance (% adult population)") +
+  scale_colour_discrete("Famine occurrance")
+
 df_HNP_indicators %>% 
   ggplot(aes(x = NY.GNP.PCAP.CD, y = SH.STA.DIAB.ZS, color = fam_occured)) +
   geom_point() +
@@ -199,4 +207,3 @@ df_HNP_famines %>%
        y = "Diabetes prevelance (% population) in 20-79 age group") +
   scale_colour_discrete("Old Famine occurrance")
 ```
-

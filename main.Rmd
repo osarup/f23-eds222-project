@@ -1,0 +1,202 @@
+---
+title: "Effects of Historical Famines on Diabetes Prevelance"
+output: html_document
+date: "2023-12-11"
+---
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE, echo=FALSE}
+library(readxl)
+library(readr)
+library(tidyverse)
+library(gt)
+library(openintro)
+library(ggplot2)
+library(modelr)
+library(knitr)
+library(xtable)
+library(lterdatasampler)
+suppressMessages(library(tidymodels))
+suppressMessages(library(gghighlight))
+suppressMessages(library(glue))
+suppressMessages(library(ggmosaic))
+suppressMessages(library(ggridges))
+suppressMessages(library(gridExtra))
+suppressMessages(library(infer))
+suppressMessages(library(janitor))
+suppressMessages(library(knitr))
+suppressMessages(library(kableExtra))
+suppressMessages(library(maps))
+suppressMessages(library(openintro))
+suppressMessages(library(patchwork))
+#suppressMessages(library(quantreg))
+suppressMessages(library(tidyverse))
+suppressMessages(library(scales))
+suppressMessages(library(skimr))
+suppressMessages(library(caret))
+suppressMessages(library(palmerpenguins))
+suppressMessages(library(survival))
+suppressMessages(library(waffle))
+suppressMessages(library(ggrepel))
+suppressMessages(library(ggpubr))
+```
+
+
+```{r data import, echo=FALSE}
+df_famines <- read_excel("data/wpf_famines.xlsx", sheet = "owd_wfp_merged")
+df_HNP_data <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Data")
+df_WB_country <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Country")
+df_WB_series <- read_excel("data/HNP_StatsEXCEL.xlsx", sheet = "Series")
+df_owd_diabetes <- read_csv("data/diabetes-prevalence.csv")
+```
+
+## Data preparation
+
+```{r}
+#get list of just countries from the WB dataset
+country_codes = (df_WB_country %>% filter(!is.na(`Currency Unit`)))$`Country Code`
+df_HNP_countries = df_HNP_data %>% filter(`Country Code` %in% country_codes)
+df_owd_diab_countries = df_owd_diabetes %>% filter(Code %in% country_codes)
+```
+
+First, we'll need to summarise and aggregate the famine data for each country.
+
+```{r}
+
+#cut off date for old famines is 1960 with the assumption that a relationship would take 2 generations to show full effects, since genes can skip a generation
+
+df_famines_agg <- df_famines %>% summarize (.by = wb_ccode,
+                                            famine_count = n(),
+                                            avg_fam_length = mean(famine_length),
+                                            avg_fam_mortality = mean(ex_mort_mid),
+                                            max_fam_mortality = max(ex_mort_mid),
+                                            total_fam_mortality = sum(ex_mort_mid),
+                                            old_famines = sum(start_year<1960)
+                                            ) %>%
+                                            mutate (fam_occured = TRUE,
+                                                    old_fam_occured = old_famines>0)
+
+#Merge with the OWD diabetes list
+df_owd_diab_countries <- df_owd_diab_countries %>% mutate(wb_ccode = Code)
+df_owd_diab_fams = merge(x=df_owd_diab_countries, y=df_famines_agg, by = "wb_ccode", all.x = T )
+df_owd_diab_fams = df_owd_diab_fams %>% mutate(fam_occured = !is.na(fam_occured))
+
+#only keep latest 2021 data
+df_owd_diab_fams_2021 = df_owd_diab_fams %>% filter(Year==2021)
+df_owd_diab_fams_2011 = df_owd_diab_fams %>% filter(Year==2011)
+```
+
+We are interested in certain indicator variables from the World Bank HNP dataset, and we will need to group by each variable and make a new DF of countries. We will only look at the latest figures.
+
+NY.GNP.PCAP.CD - GNI per capita, Atlas method (current US$)
+SH.DYN.NCOM.ZS - Mortality from CVD, cancer, diabetes or CRD between exact ages 30 and 70 (%)
+SH.STA.OWAD.ZS - Prevalence of overweight (% of adults)
+SH.STA.DIAB.ZS - Diabetes prevalence (% of population ages 20 to 79)
+
+```{r}
+PCAP_country = df_HNP_countries %>% 
+  filter(`Indicator Code`=="NY.GNP.PCAP.CD") %>% 
+  select(`Country Code`,`Country Name`, `2021`) %>% 
+  rename(wb_ccode = `Country Code`, NY.GNP.PCAP.CD=`2021`)
+
+NCOM_country = df_HNP_countries %>% 
+  filter(`Indicator Code`=="SH.DYN.NCOM.ZS") %>% 
+  select(`Country Code`,`Country Name`, `2019`) %>% 
+  rename(wb_ccode = `Country Code`, SH.DYN.NCOM.ZS=`2019`)
+
+OWAD_country = df_HNP_countries %>% 
+  filter(`Indicator Code`=="SH.STA.OWAD.ZS") %>% 
+  select(`Country Code`,`Country Name`, `2016`) %>% 
+  rename(wb_ccode = `Country Code`, SH.STA.OWAD.ZS=`2016`)
+
+DIAB_country = df_HNP_countries %>% 
+  filter(`Indicator Code`=="SH.STA.DIAB.ZS") %>% 
+  select(`Country Code`,`Country Name`, `2021`) %>% 
+  rename(wb_ccode = `Country Code`, SH.STA.DIAB.ZS=`2021`)
+
+df_indicators = cbind(PCAP_country, 
+                      SH.STA.DIAB.ZS = DIAB_country$SH.STA.DIAB.ZS, 
+                      SH.DYN.NCOM.ZS = NCOM_country$SH.DYN.NCOM.ZS, 
+                      SH.STA.OWAD.ZS = OWAD_country$SH.STA.OWAD.ZS)
+
+df_HNP_indicators = merge(x=df_indicators, y=df_famines_agg, by = "wb_ccode", all.x = T )
+
+df_HNP_indicators = df_HNP_indicators %>% 
+  filter(!is.na(NY.GNP.PCAP.CD)) %>%
+  mutate(fam_occured = !is.na(fam_occured))
+
+df_HNP_famines = df_HNP_indicators %>% filter(fam_occured)
+```
+
+
+## Analysis
+```{r}
+ggplot(data = df_owd_diab_fams, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = as.factor(Year), colour = fam_occured)) +
+  geom_point() +
+  labs(x = "Year", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + theme_classic()
+
+ggplot(data = df_owd_diab_fams_2021, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = fam_occured)) +
+  geom_point() +
+  labs(x = "Famine occurrance",
+       y = "Diabetes prevalence (% of population ages 20 to 79)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + theme_classic()
+
+ggplot(data = df_owd_diab_fams_2011, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = old_fam_occured)) +
+  geom_point() +
+  labs(x = "Old Famine occurrance",
+       y = "Diabetes prevalence (% of population ages 20 to 79)")+ theme_classic()
+
+
+df_owd_diab_fams_2021 %>% filter(fam_occured == TRUE) %>%
+  ggplot(aes(y=`Diabetes prevalence (% of population ages 20 to 79)`, x=old_fam_occured, label=Entity)) + geom_point() + geom_text(hjust=0, vjust=0) +
+  labs(x = "Pre-1960 famine occurrance", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "Only Countries with Famines") + theme_classic()
+
+
+```
+
+Using World Bank Data
+
+ggplot(data = df_owd_diab_fams, aes(y = `Diabetes prevalence (% of population ages 20 to 79)`, x = as.factor(Year), colour = fam_occured)) +
+  geom_point() +
+  labs(x = "Year", y = "Diabetes prevalence (% of population)", title = "Diabetes prevalence (% of population ages 20 to 79)", subtitle = "All countries") + theme_classic()
+  
+```{r}
+lm (SH.STA.DIAB.ZS ~ fam_occured, data = df_HNP_indicators) %>% summary()
+lm (SH.STA.DIAB.ZS ~ old_fam_occured, data = df_HNP_famines) %>% summary()
+
+lm (SH.DYN.NCOM.ZS ~ fam_occured, data = df_HNP_indicators) %>% summary()
+lm (SH.DYN.NCOM.ZS ~ old_fam_occured, data = df_HNP_famines) %>% summary()
+
+lm (SH.STA.OWAD.ZS ~ fam_occured,  data = df_HNP_indicators) %>% summary()
+lm (SH.STA.OWAD.ZS ~ old_fam_occured, data = df_HNP_famines) %>% summary()
+
+mod_dia_gni = lm (SH.STA.DIAB.ZS ~ fam_occured + NY.GNP.PCAP.CD, data = df_HNP_indicators)
+summary(mod_dia_gni)
+
+mod_dia_gni_oldf =lm (SH.STA.DIAB.ZS ~ old_fam_occured + NY.GNP.PCAP.CD, data = df_HNP_famines)
+summary(mod_dia_gni_oldf)
+
+mod_dia_gni_owad = lm (SH.STA.DIAB.ZS ~ fam_occured + NY.GNP.PCAP.CD + SH.STA.OWAD.ZS, data = df_HNP_indicators)
+summary(mod_dia_gni_owad)
+
+df_HNP_indicators %>% 
+  ggplot(aes(x = NY.GNP.PCAP.CD, y = SH.STA.DIAB.ZS, color = fam_occured)) +
+  geom_point() +
+  geom_line(data = augment(mod_dia_gni), aes(y = .fitted, color = fam_occured)) + 
+  labs(x = "GNI Per Capita (2021)",
+       y = "Diabetes prevelance (% population) in 20-79 age group") +
+  scale_colour_discrete("Famine occurrance")
+
+df_HNP_famines %>% 
+  ggplot(aes(x = NY.GNP.PCAP.CD, y = SH.STA.DIAB.ZS, color = old_fam_occured)) +
+  geom_point() +
+  geom_line(data = augment(mod_dia_gni_oldf), aes(y = .fitted, color = old_fam_occured)) + 
+  labs(x = "GNI Per Capita (2021)",
+       y = "Diabetes prevelance (% population) in 20-79 age group") +
+  scale_colour_discrete("Old Famine occurrance")
+```
+
